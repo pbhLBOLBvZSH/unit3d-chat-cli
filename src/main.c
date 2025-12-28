@@ -178,8 +178,7 @@ static void html_strip_and_unescape(char *s) {
 // Parse rooms response and prompt user to pick a room id. Returns 1 on success
 static int parse_rooms_and_prompt(void) {
     MemoryStruct chunk = {0};
-    /* Build rooms URL from tracker config (accept bare domain or full path). */
-
+    
     snprintf(rooms_url, sizeof(rooms_url), "%s/api/chat/rooms", tracker);
     snprintf(message_send_url, sizeof(message_send_url), "%s/api/chat/messages", tracker);
     if(http_get(rooms_url, &chunk) != 0 || !chunk.memory) { free(chunk.memory); return 0; }
@@ -451,12 +450,8 @@ static void parse_and_display_json(const char *json) {
 
         /* extract fields inside [obj, obj_end) */
         long id = 0; username[0] = '\0'; msgbuf[0] = '\0'; created_at[0] = '\0'; colorhex[0] = '\0';
-        if(extract_primitive_in_range(obj, obj_end, "\"id\"", tmp, sizeof(tmp))) {
-            id = atol(tmp);
-        }
-        if (extract_string_in_range(obj, obj_end, "\"message\"", msgbuf, sizeof(msgbuf))) {
-            html_strip_and_unescape(msgbuf);
-        }
+        if (extract_primitive_in_range(obj, obj_end, "\"id\"", tmp, sizeof(tmp))) id = atol(tmp);
+        if (extract_string_in_range(obj, obj_end, "\"message\"", msgbuf, sizeof(msgbuf))) html_strip_and_unescape(msgbuf);
         extract_string_in_range(obj, obj_end, "\"username\"", username, sizeof(username));
         extract_string_in_range(obj, obj_end, "\"created_at\"", created_at, sizeof(created_at));
         extract_string_in_range(obj, obj_end, "\"color\"", colorhex, sizeof(colorhex));
@@ -554,8 +549,7 @@ static int http_post(const char *url, const char *json_body) {
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
-    if(user_agent[0]) curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent);
-    else curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
