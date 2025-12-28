@@ -117,7 +117,7 @@ static void json_unescape(const char *in, int inlen, char *out, size_t outlen) {
 // Two-pass approach:
 //  1) Decode HTML entities (named and numeric) into a temporary buffer
 //  2) Remove any tags by skipping content between '<' and '>' so only visible text remains
-static void html_strip_and_unescape(char *s) {
+static void html_strip_and_unescape(char *s, size_t padding) {
     if(!s) return;
     size_t len = strlen(s);
     char *tmp = malloc(len + 1);
@@ -166,9 +166,16 @@ static void html_strip_and_unescape(char *s) {
     int in_tag = 0;
     for(size_t k = 0; k < ti; ++k) {
         char c = tmp[k];
+        if (strncmp(&tmp[k], "<br>", 4) == 0) {
+            while (c != '>') c = tmp[++k]; // Move to the end of the tag
+            s[si++] = '\n';
+            for(size_t p = 0; p < padding; ++p) s[si++] = ' ';
+            continue;
+        }
         if(c == '<') { in_tag = 1; continue; }
         if(c == '>') { in_tag = 0; continue; }
         if(in_tag) continue;
+
         s[si++] = c;
     }
     s[si] = '\0';
@@ -178,7 +185,7 @@ static void html_strip_and_unescape(char *s) {
 // Parse rooms response and prompt user to pick a room id. Returns 1 on success
 static int parse_rooms_and_prompt(void) {
     MemoryStruct chunk = {0};
-    
+
     snprintf(rooms_url, sizeof(rooms_url), "%s/api/chat/rooms", tracker);
     snprintf(message_send_url, sizeof(message_send_url), "%s/api/chat/messages", tracker);
     if(http_get(rooms_url, &chunk) != 0 || !chunk.memory) { free(chunk.memory); return 0; }
@@ -408,15 +415,53 @@ static int extract_primitive_in_range(const char *start, const char *end, const 
     return 1;
 }
 
+#define MAX_MESSAGES 100
+#define MAX_USERNAME_LEN 128
+#define MAX_COLOR_LEN 32
+#define MAX_MSG_LEN 1024
+
+typedef struct {
+    long id;
+    char username[MAX_USERNAME_LEN];
+    char message[MAX_MSG_LEN];
+    char created_at[64];
+    char color[MAX_COLOR_LEN];
+} Message;
+
+long *seen_ids = NULL;
+size_t seen_ids_size = 0;
+size_t seen_ids_capacity = 0;
+
+bool have_seen_id(long id) {
+    if (seen_ids == NULL) {
+        seen_ids = malloc(sizeof(long) * 1000); // arbitrary size
+        seen_ids_capacity = 1000;
+        seen_ids_size = 0;
+    }
+
+    for(size_t i = 0; i < seen_ids_size; ++i) if(seen_ids[i] == id) return true;
+    // If not, add it.
+    if (seen_ids_capacity >= seen_ids_size-10) {
+        seen_ids = realloc(seen_ids, sizeof(long) * (seen_ids_capacity + 1000));
+        seen_ids_capacity += 1000;
+    }
+    seen_ids[seen_ids_size++] = id;
+    return false;
+}
+
 // Very lightweight extractor: scan the "data" array for object spans and only extract the keys we care about.
 static void parse_and_display_json(const char *json) {
     if(!json) return;
+
     const char *p = strstr(json, "\"data\"");
     if(!p) return;
     p = strchr(p, '[');
     if(!p) return;
     const char *cur = p + 1;
     const char *endroot = json + strlen(json);
+
+    Message messages[MAX_MESSAGES];
+    int message_count = 0;
 
     char tmp[2048];
     char msgbuf[MAX_MSG_LEN];
@@ -450,18 +495,28 @@ static void parse_and_display_json(const char *json) {
 
         /* extract fields inside [obj, obj_end) */
         long id = 0; username[0] = '\0'; msgbuf[0] = '\0'; created_at[0] = '\0'; colorhex[0] = '\0';
-        if (extract_primitive_in_range(obj, obj_end, "\"id\"", tmp, sizeof(tmp))) id = atol(tmp);
-        if (extract_string_in_range(obj, obj_end, "\"message\"", msgbuf, sizeof(msgbuf))) html_strip_and_unescape(msgbuf);
         extract_string_in_range(obj, obj_end, "\"username\"", username, sizeof(username));
         extract_string_in_range(obj, obj_end, "\"created_at\"", created_at, sizeof(created_at));
         extract_string_in_range(obj, obj_end, "\"color\"", colorhex, sizeof(colorhex));
+        if (extract_primitive_in_range(obj, obj_end, "\"id\"", tmp, sizeof(tmp))) id = atol(tmp);
+        if (extract_string_in_range(obj, obj_end, "\"message\"", msgbuf, sizeof(msgbuf))) html_strip_and_unescape(msgbuf, strlen(username) + 2);
 
-        if(id > last_id) {
-            display_message(username, msgbuf, colorhex);
-            if(id > last_id) last_id = id;
+
+        if(message_count < MAX_MESSAGES) {
+            messages[message_count].id = id;
+            strncpy(messages[message_count].username, username, MAX_USERNAME_LEN-1);
+            strncpy(messages[message_count].message, msgbuf, MAX_MSG_LEN-1);
+            strncpy(messages[message_count].created_at, created_at, 63);
+            strncpy(messages[message_count].color, colorhex, MAX_COLOR_LEN-1);
+            message_count++;
         }
-
         cur = obj_end;
+    }
+
+    /* display messages in reverse order to maintain chronological order */
+    for(int i = message_count - 1; i >= 0; --i) {
+        if (have_seen_id(messages[i].id)) continue;
+        display_message(messages[i].username, messages[i].message, messages[i].color);
     }
 }
 
@@ -567,7 +622,7 @@ static int http_post(const char *url, const char *json_body) {
             char snip[512];
             int sniplen = resp.size < (int)sizeof(snip)-1 ? (int)resp.size : (int)sizeof(snip)-1;
             memcpy(snip, resp.memory, sniplen); snip[sniplen] = '\0';
-            html_strip_and_unescape(snip);
+            html_strip_and_unescape(snip, 0);
             char out2[1024];
             snprintf(out2, sizeof(out2), "[server] %s", snip);
             append_output(out2);
