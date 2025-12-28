@@ -685,7 +685,7 @@ static void *writer_thread(void *arg) {
 
         char body[MAX_MSG_LEN+128];
         /* include chatroom_id and simple message body; minimal escaping */
-        snprintf(body, sizeof(body), "{\"user_id\":18518,\"receiver_id\":null,\"bot_id\":null,\"chatroom_id\":%ld,\"message\":\"%s\",\"targeted\":0}", selected_room_id, buf);
+        snprintf(body, sizeof(body), "{\"user_id\":null,\"receiver_id\":null,\"bot_id\":null,\"chatroom_id\":%ld,\"message\":\"%s\",\"targeted\":0}", selected_room_id, buf);
         if(http_post(message_send_url, body) != 0) append_output("[error] failed to send message");
     }
     return NULL;
